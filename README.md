@@ -32,10 +32,11 @@ make check-data-noninteractive
 When running in interactive mode, the tool presents numbered lists for:
 
 - **Districts**: Lists all districts from districts.district table (enter numbers: `1` or `1,3,5`)
+- **Health centers**: After district selection, lists facilities from the selected district(s) (enter numbers: `2` or `2,4,7`)
 - **Survey years**: Lists unique survey_year values from qr_codes (enter numbers: `2` or `1,2,3`)
 - **Projects**: Lists active projects where status_id=1 from projects table (enter numbers: `4` or `1,2,4`)
 
-Press Enter to skip any selection and use defaults/all data.
+Press Enter to skip any selection and use defaults/all data. For health centers, leaving it empty selects all health centers.
 
 ### Non-interactive (CLI) mode examples
 

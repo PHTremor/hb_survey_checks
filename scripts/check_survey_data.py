@@ -273,6 +273,33 @@ def fetch_project_options(conn: psycopg.Connection) -> list[tuple[str, str]]:
         return [(r[0], r[1] or "(unnamed)") for r in cur.fetchall()]
 
 
+def fetch_health_center_options(
+    conn: psycopg.Connection,
+    district_ids: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Fetch health centers, optionally filtered to selected district IDs."""
+    with conn.cursor() as cur:
+        if district_ids:
+            cur.execute(
+                """
+                SELECT hc.id, COALESCE(hc.name, '(unnamed)')
+                FROM public.health_centers hc
+                WHERE hc.district_id::text = ANY(%s)
+                ORDER BY hc.name
+                """,
+                (district_ids,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT hc.id, COALESCE(hc.name, '(unnamed)')
+                FROM public.health_centers hc
+                ORDER BY hc.name
+                """
+            )
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
+
 def present_numbered_options(
     items: list[tuple[str, str]], prompt_text: str
 ) -> list[str]:
@@ -322,6 +349,7 @@ def build_scope_query(
     district_name: str | None,
     year_filter: str | None,
     type_ids: list[str] | None,
+    health_center_ids: list[str] | None,
 ) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
@@ -347,6 +375,10 @@ def build_scope_query(
     if type_ids:
         where.append("q.type_id::text = ANY(%s)")
         params.append(type_ids)
+
+    if health_center_ids:
+        where.append("COALESCE(hc.id, q.health_center_id)::text = ANY(%s)")
+        params.append(health_center_ids)
 
     sql_text = """
         SELECT
@@ -377,8 +409,15 @@ def fetch_scope_rows(
     district_name: str | None,
     year_filter: str | None,
     type_ids: list[str] | None,
+    health_center_ids: list[str] | None,
 ) -> list[dict[str, Any]]:
-    query, params = build_scope_query(district_id, district_name, year_filter, type_ids)
+    query, params = build_scope_query(
+        district_id,
+        district_name,
+        year_filter,
+        type_ids,
+        health_center_ids,
+    )
     with conn.cursor() as cur:
         cur.execute(cast(Any, query), params)
         description = cur.description
@@ -773,6 +812,7 @@ def write_markdown_report(
         "",
         f"Generated at: {context['generated_at']}",
         f"District filter: {context['district_filter']}",
+        f"Health centers filter: {context.get('health_centers_filter', 'ALL')}",
         f"Year filter: {context['year_filter']}",
         f"QR code types filter: {context.get('qr_code_types_filter', 'ALL')}",
         f"Expected surveys in scope: {context['scope_count']}",
@@ -870,6 +910,8 @@ def main() -> int:
         year_filter = args.year
         type_ids = [value.strip() for value in args.type_ids.split(",")] if args.type_ids else []
         project_ids = args.projects.split(",") if args.projects else []
+        health_center_ids: list[str] = []
+        selected_district_ids: list[str] = [district_id] if district_id else []
 
         # Interactive district selection with numbered options
         if interactive and not district_id and not district_name:
@@ -885,6 +927,23 @@ def main() -> int:
                             (name for did, name in district_options if did == district_id),
                             None,
                         )
+
+        # Interactive health center selection with numbered options
+        # If district(s) are selected, only facilities from those districts are shown.
+        if interactive:
+            health_center_options = fetch_health_center_options(conn, selected_district_ids)
+            if health_center_options:
+                selected_health_centers = present_numbered_options(
+                    health_center_options,
+                    "Available health centers"
+                    + (
+                        " (in selected district(s)):"
+                        if selected_district_ids
+                        else ":"
+                    ),
+                )
+                if selected_health_centers:
+                    health_center_ids = selected_health_centers
 
         # Interactive year selection with numbered options
         if interactive and not year_filter:
@@ -936,6 +995,7 @@ def main() -> int:
             district_name,
             year_filter,
             type_ids,
+            health_center_ids,
         )
 
         module_rows, table_rows, health_center_rows = summarize(
@@ -960,6 +1020,9 @@ def main() -> int:
                 "district_filter": district_id or district_name or "ALL",
                 "year_filter": year_filter or "ALL",
                 "qr_code_types_filter": ", ".join(type_ids) if type_ids else "ALL",
+                "health_centers_filter": ", ".join(health_center_ids)
+                if health_center_ids
+                else "ALL",
                 "scope_count": len(scope_rows),
             },
             health_center_rows,
