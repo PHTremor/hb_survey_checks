@@ -639,17 +639,31 @@ def summarize_project_data(
 def get_project_facility_data(
     conn: psycopg.Connection,
     project_ids: list[str],
+    district_id: str | None = None,
+    district_name: str | None = None,
+    health_center_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Get project data by facility: project_id, project_name, health_center, item_count."""
     if not project_ids:
         return []
 
     rows: list[dict[str, Any]] = []
+    where: list[str] = ["pd.project_id = ANY(%s)"]
+    params: list[Any] = [project_ids]
+
+    if district_id:
+        where.append("hc.district_id::text = %s")
+        params.append(district_id)
+    elif district_name:
+        where.append("d.district = %s")
+        params.append(district_name)
+
+    if health_center_ids:
+        where.append("pd.health_center_id::text = ANY(%s)")
+        params.append(health_center_ids)
 
     with conn.cursor() as cur:
-        # Build IN clause for multiple project IDs
-        ids_placeholder = ",".join(["%s"] * len(project_ids))
-        query = f"""
+        query = """
             SELECT
                 pd.project_id,
                 p.name as project_name,
@@ -658,11 +672,12 @@ def get_project_facility_data(
             FROM public.project_data pd
             LEFT JOIN public.projects p ON p.id = pd.project_id
             LEFT JOIN public.health_centers hc ON hc.id = pd.health_center_id
-            WHERE pd.project_id IN ({ids_placeholder})
+            LEFT JOIN public.districts d ON d.id = hc.district_id
+            WHERE {where_clause}
             GROUP BY pd.project_id, p.name, hc.name
             ORDER BY p.name, hc.name
-        """
-        cur.execute(cast(Any, query), project_ids)
+        """.format(where_clause=" AND ".join(where))
+        cur.execute(cast(Any, query), params)
         result = cur.fetchall()
 
         if result and result[0] and len(cast(Any, result[0])) >= 4:
@@ -1003,7 +1018,13 @@ def main() -> int:
         )
 
         project_rows = summarize_project_data(conn, project_ids)
-        project_facility_rows = get_project_facility_data(conn, project_ids)
+        project_facility_rows = get_project_facility_data(
+            conn,
+            project_ids,
+            district_id=district_id,
+            district_name=district_name,
+            health_center_ids=health_center_ids,
+        )
 
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         district_display = (district_name or "all_districts").replace(" ", "_").replace("/", "_")

@@ -76,6 +76,7 @@ Each folder contains:
     - **Projects** sheet (when `--projects` flag is used): project data by health center
         - Columns: Project ID, Project Name, Health Center, Items Recorded
         - Shows actual recorded items per project per facility from project_data table
+        - Respects selected district and health center filters when provided
 - `report.md` — Human-readable report grouped by health center and module
     - Only lists health centers and modules with missing data
     - Format: table_name (added:#/expected:#; missing:#)
