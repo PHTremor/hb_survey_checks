@@ -154,7 +154,7 @@ MODULES = {
         "FocalPersons",
     ],
     "Patient Satisfaction": [
-        "AdditionalSuggestions",
+        "PatientSatisfactionBasicInfos",
     ],
     "Pharmacy Management": [
         "PharmacyReviews",

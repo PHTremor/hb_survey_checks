@@ -48,6 +48,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--district-id", help="District id filter")
     parser.add_argument("--year", help="Survey year filter, e.g. 2024")
     parser.add_argument(
+        "--type-ids",
+        help="Comma-separated qr_code_types.id values to filter surveys",
+    )
+    parser.add_argument(
         "--projects",
         help="Comma-separated list of project IDs for project section",
     )
@@ -248,6 +252,18 @@ def fetch_year_options(conn: psycopg.Connection) -> list[str]:
         return [r[0] for r in cur.fetchall()]
 
 
+def fetch_qr_code_type_options(conn: psycopg.Connection) -> list[tuple[str, str]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id::text, COALESCE(name, '(unnamed)')
+            FROM public.qr_code_types
+            ORDER BY id
+            """
+        )
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
+
 def fetch_project_options(conn: psycopg.Connection) -> list[tuple[str, str]]:
     """Fetch active projects where status_id = 1."""
     with conn.cursor() as cur:
@@ -305,6 +321,7 @@ def build_scope_query(
     district_id: str | None,
     district_name: str | None,
     year_filter: str | None,
+    type_ids: list[str] | None,
 ) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
@@ -327,15 +344,22 @@ def build_scope_query(
             where.append("q.survey_year = %s")
             params.append(year_filter)
 
+    if type_ids:
+        where.append("q.type_id::text = ANY(%s)")
+        params.append(type_ids)
+
     sql_text = """
         SELECT
             q.id AS survey_id,
             q.survey_year,
+            q.type_id::text AS qr_code_type_id,
+            qct.name AS qr_code_type_name,
             COALESCE(d.id, q.district_id) AS district_id,
             COALESCE(d.district, q.district) AS district_name,
             COALESCE(hc.id, q.health_center_id) AS health_center_id,
             COALESCE(hc.name, q.health_center) AS health_center_name
         FROM public.qr_codes q
+        LEFT JOIN public.qr_code_types qct ON qct.id = q.type_id
         LEFT JOIN public.districts d ON d.id = q.district_id
         LEFT JOIN public.health_centers hc ON hc.id = q.health_center_id
     """
@@ -352,8 +376,9 @@ def fetch_scope_rows(
     district_id: str | None,
     district_name: str | None,
     year_filter: str | None,
+    type_ids: list[str] | None,
 ) -> list[dict[str, Any]]:
-    query, params = build_scope_query(district_id, district_name, year_filter)
+    query, params = build_scope_query(district_id, district_name, year_filter, type_ids)
     with conn.cursor() as cur:
         cur.execute(cast(Any, query), params)
         description = cur.description
@@ -749,6 +774,7 @@ def write_markdown_report(
         f"Generated at: {context['generated_at']}",
         f"District filter: {context['district_filter']}",
         f"Year filter: {context['year_filter']}",
+        f"QR code types filter: {context.get('qr_code_types_filter', 'ALL')}",
         f"Expected surveys in scope: {context['scope_count']}",
         f"Health centers with missing data: {len(by_health_center)}",
         "",
@@ -842,6 +868,7 @@ def main() -> int:
         district_id = args.district_id
         district_name = args.district
         year_filter = args.year
+        type_ids = [value.strip() for value in args.type_ids.split(",")] if args.type_ids else []
         project_ids = args.projects.split(",") if args.projects else []
 
         # Interactive district selection with numbered options
@@ -871,6 +898,16 @@ def main() -> int:
                     if len(selected_years) == 1:
                         year_filter = selected_years[0]
 
+        if interactive and not type_ids:
+            type_options = fetch_qr_code_type_options(conn)
+            if type_options:
+                selected_type_ids = present_numbered_options(
+                    type_options,
+                    "Available qr code types:",
+                )
+                if selected_type_ids:
+                    type_ids = selected_type_ids
+
         # Interactive project selection with numbered options
         if interactive and not project_ids:
             project_options = fetch_project_options(conn)
@@ -893,7 +930,13 @@ def main() -> int:
             )
 
         resolutions = build_module_resolutions(conn)
-        scope_rows = fetch_scope_rows(conn, district_id, district_name, year_filter)
+        scope_rows = fetch_scope_rows(
+            conn,
+            district_id,
+            district_name,
+            year_filter,
+            type_ids,
+        )
 
         module_rows, table_rows, health_center_rows = summarize(
             scope_rows, resolutions, conn
@@ -916,6 +959,7 @@ def main() -> int:
                 "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
                 "district_filter": district_id or district_name or "ALL",
                 "year_filter": year_filter or "ALL",
+                "qr_code_types_filter": ", ".join(type_ids) if type_ids else "ALL",
                 "scope_count": len(scope_rows),
             },
             health_center_rows,

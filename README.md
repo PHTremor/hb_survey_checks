@@ -85,7 +85,7 @@ Each folder contains:
 - Project checks are independent from `qr_codes` because surveys are not linked to projects in current schema.
 - Year filtering accepts exact value, wildcard (`%`), or a 4-digit year prefix.
 - **Excluded tables**:
-    - Patient Satisfaction: only `AdditionalSuggestions` (other satisfaction tables excluded)
+    - Patient Satisfaction: only `patient_satisfaction_basic_infos` (other satisfaction tables excluded)
     - Pharmacy Management: `PharmacyDrugs` excluded
 - **Excel workbook features**:
     - Overview sheet shows module-level summaries with total missing records
